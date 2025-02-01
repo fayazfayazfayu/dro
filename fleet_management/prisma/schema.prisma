@@ -1,0 +1,62 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  password      String
+  firstName     String
+  lastName      String
+  phoneNumber   String?
+  licenseNumber String    @unique
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  routes        Route[]   // Routes assigned to the driver
+  Vehicle       Vehicle[] // Vehicles assigned to the driver
+}
+
+model Vehicle {
+  id                String   @id @default(uuid())
+  registrationNumber String  @unique
+  model            String
+  capacity         Float    // in tons or cubic meters
+  fuelType         String
+  lastMaintenance  DateTime?
+  isActive         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  userId           String?  // Driver assigned to the vehicle
+  user             User?    @relation(fields: [userId], references: [id])
+  routes           Route[]
+}
+
+model Route {
+  id          String   @id @default(uuid())
+  name        String
+  startPoint  String   // Could be coordinates or address
+  endPoint    String   // Could be coordinates or address
+  waypoints   Json?    // Array of coordinates/addresses for stops
+  distance    Float    // in kilometers
+  duration    Float    // in minutes
+  status      RouteStatus @default(PENDING)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  userId      String   // Assigned driver
+  vehicleId   String   // Assigned vehicle
+  user        User     @relation(fields: [userId], references: [id])
+  vehicle     Vehicle  @relation(fields: [vehicleId], references: [id])
+}
+
+enum RouteStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
