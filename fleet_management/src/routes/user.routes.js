@@ -13,4 +13,7 @@ router.get('/:id', authMiddleware, roleMiddleware.isSelfOrAdmin, userController.
 router.put('/:id', authMiddleware, roleMiddleware.isSelfOrAdmin, validateUser, userController.updateUser);
 router.delete('/:id', authMiddleware, roleMiddleware.isAdmin, userController.deleteUser);
 
-module.exports = router; 
+// Add route to update user status (Admin only)
+router.patch('/:id/status', authMiddleware, roleMiddleware.isAdmin, userController.updateUserStatus);
+
+module.exports = router;

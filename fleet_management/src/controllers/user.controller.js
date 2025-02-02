@@ -99,6 +99,34 @@ const userController = {
     } catch (error) {
       res.status(500).json({ message: 'Server error', error: error.message });
     }
+  },
+  // New method to update user status
+  updateUserStatus: async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { isActive } = req.body;
+
+      // Ensure isActive is a boolean
+      if (typeof isActive !== 'boolean') {
+        return res.status(400).json({ message: 'Invalid status value' });
+      }
+
+      // Check if the user exists
+      const user = await prisma.user.findUnique({ where: { id } });
+      if (!user) {
+        return res.status(404).json({ message: 'User not found' });
+      }
+
+      // Update the user's isActive status
+      const updatedUser = await prisma.user.update({
+        where: { id },
+        data: { isActive }
+      });
+
+      res.json(updatedUser);
+    } catch (error) {
+      res.status(500).json({ message: 'Error updating user status', error: error.message });
+    }
   }
 };
 
