@@ -38,6 +38,8 @@ const CongestionCell = styled(Td)`
         return '#FF0000';
       case 'medium':
         return '#FFA500';
+      case 'low':
+        return '#4A90E2';
       default:
         return '#4A90E2';
     }
@@ -48,12 +50,10 @@ const CongestionCell = styled(Td)`
 const TrafficTable = ({ trafficData }) => {
   if (!trafficData?.traffic_segments) return null;
 
-  const getCongestionLevel = (currentSpeed, freeFlowSpeed) => {
-    if (!currentSpeed || !freeFlowSpeed) return 'Low';
-    const ratio = currentSpeed / freeFlowSpeed;
-    if (ratio > 0.8) return 'Low';
-    if (ratio > 0.4) return 'Medium';
-    return 'High';
+  const getCongestionLevel = (speed) => {
+    if (speed < 15) return 'High';
+    if (speed < 25) return 'Medium';
+    return 'Low';
   };
 
   return (
@@ -70,10 +70,7 @@ const TrafficTable = ({ trafficData }) => {
         </thead>
         <tbody>
           {trafficData.traffic_segments.map((segment, index) => {
-            const congestionLevel = getCongestionLevel(
-              segment.current_speed,
-              segment.free_flow_speed
-            );
+            const congestionLevel = segment.congestion_level || getCongestionLevel(segment.current_speed);
             
             return (
               <tr key={index}>

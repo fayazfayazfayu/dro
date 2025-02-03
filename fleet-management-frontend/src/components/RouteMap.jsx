@@ -66,6 +66,19 @@ const AlertIcon = styled.div`
     }
 `;
 
+const getCongestionStyle = (level) => {
+  switch (level) {
+    case 'High':
+      return { color: '#ff4444', text: 'High' };
+    case 'Medium':
+      return { color: '#ffa700', text: 'Medium' };
+    case 'Low':
+      return { color: '#44b700', text: 'Low' };
+    default:
+      return { color: '#44b700', text: 'Low' };
+  }
+};
+
 const RouteMap = ({ depot, destinations, routeData }) => {
   const mapRef = useRef(null);
   const leafletMap = useRef(null);
@@ -113,14 +126,14 @@ const RouteMap = ({ depot, destinations, routeData }) => {
   useEffect(() => {
     if (!leafletMap.current || !depot || !destinations.length) return;
 
-    // Clear existing markers
+    // Clear previous layers
     leafletMap.current.eachLayer(layer => {
       if (layer instanceof L.Marker || layer instanceof L.Polyline) {
         leafletMap.current.removeLayer(layer);
       }
     });
 
-    // Add depot marker with custom icon
+    // Add depot marker
     const depotIcon = L.divIcon({
       className: 'custom-div-icon',
       html: `<div style="background-color: #1A1B4B; color: white; padding: 5px; border-radius: 50%; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center;">D</div>`,
@@ -146,21 +159,54 @@ const RouteMap = ({ depot, destinations, routeData }) => {
           .bindPopup(`Stop ${stop.number}: ${stop.name}`)
           .addTo(leafletMap.current);
       });
+    }
 
-      // Draw route path if coordinates exist
-      if (routeData.geometry?.coordinates) {
-        const coordinates = routeData.geometry.coordinates.map(coord => [coord[1], coord[0]]);
+    // Draw route with arrows
+    if (routeData?.geometry?.coordinates) {
+      const coordinates = routeData.geometry.coordinates.map(coord => [coord[1], coord[0]]);
+      
+      // Draw main route line
+      const routeLine = L.polyline(coordinates, {
+        color: '#4A90E2',
+        weight: 4,
+        opacity: 0.8
+      }).addTo(leafletMap.current);
+
+      // Add arrows at regular intervals
+      const totalDistance = routeData.distance;
+      const arrowCount = 5; // Reduced number of arrows
+      const distanceInterval = totalDistance / (arrowCount + 1);
+      
+      let distanceCovered = distanceInterval;
+      let lastPoint = coordinates[0];
+      
+      for (let i = 1; i < coordinates.length && distanceCovered < totalDistance; i++) {
+        const point = coordinates[i];
+        const segmentDistance = L.latLng(lastPoint).distanceTo(L.latLng(point));
         
-        L.polyline(coordinates, {
-          color: '#4A90E2',
-          weight: 4,
-          opacity: 0.8,
-          dashArray: '10, 10'  // Makes the line dashed
-        }).addTo(leafletMap.current);
+        if (segmentDistance > 0) {
+          const angle = Math.atan2(point[1] - lastPoint[1], point[0] - lastPoint[0]) * 180 / Math.PI;
+          
+          // Create arrow marker
+          const arrowIcon = L.divIcon({
+            html: `<div style="transform: rotate(${angle}deg);">➤</div>`,
+            className: 'arrow-icon',
+            iconSize: [24, 24],
+            iconAnchor: [12, 12]
+          });
+          
+          L.marker([lastPoint[0], lastPoint[1]], {
+            icon: arrowIcon
+          }).addTo(leafletMap.current);
+          
+          distanceCovered += distanceInterval;
+        }
+        
+        lastPoint = point;
       }
     }
 
-    // Fit map to show all points
+    // Fit map bounds
     const allPoints = [
       [depot.lat, depot.lon],
       ...(routeData?.stops 
@@ -320,6 +366,37 @@ const RouteMap = ({ depot, destinations, routeData }) => {
     };
   }, [routeData?.route_id, depot, destinations]);
 
+  // Update the traffic information table
+  const TrafficTable = ({ segments }) => (
+    <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <thead style={{ position: 'sticky', top: 0, background: '#1A1B4B', color: 'white' }}>
+          <tr>
+            <th>Time</th>
+            <th>Distance (km)</th>
+            <th>Speed (km/h)</th>
+            <th>Congestion</th>
+          </tr>
+        </thead>
+        <tbody>
+          {segments.map((segment, index) => {
+            const style = getCongestionStyle(segment.congestion_level);
+            return (
+              <tr key={index}>
+                <td>{new Date(segment.timestamp).toLocaleTimeString()}</td>
+                <td>{(segment.distance_covered / 1000).toFixed(2)}</td>
+                <td>{segment.current_speed}</td>
+                <td style={{ color: style.color, fontWeight: 'bold' }}>
+                  {style.text}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+
   return (
     <div style={{ position: 'relative', height: '100%' }}>
       <div ref={mapRef} style={{ height: '100%' }} />
@@ -329,15 +406,26 @@ const RouteMap = ({ depot, destinations, routeData }) => {
           top: 10,
           right: 10,
           background: 'white',
-          padding: '10px',
-          borderRadius: '4px',
+          padding: '15px',
+          borderRadius: '8px',
           boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
-          zIndex: 1000
+          zIndex: 1000,
+          maxWidth: '400px'
         }}>
-          <h3>Route Details</h3>
-          <p>Distance: {((routeData.total_distance || routeData.distance) / 1000).toFixed(2)} km</p>
+          <h3 style={{ marginTop: 0 }}>Route Details</h3>
+          <p>Distance: {(routeData.distance / 1000).toFixed(2)} km</p>
           <p>Stops: {routeData.stops?.length || 0}</p>
-          <p>Last Update: {new Date().toLocaleTimeString()}</p>
+          <p>ETA: {new Date(routeData.eta).toLocaleTimeString()}</p>
+          <p>Traffic Conditions: {routeData.traffic_conditions?.summary}</p>
+          {routeData.traffic_conditions?.delay_minutes > 0 && (
+            <p style={{ color: '#ff4444' }}>
+              Delay: {routeData.traffic_conditions.delay_minutes} minutes
+            </p>
+          )}
+          <h4>Traffic Information</h4>
+          {routeData.traffic_segments && (
+            <TrafficTable segments={routeData.traffic_segments} />
+          )}
         </div>
       )}
     </div>

@@ -1,6 +1,6 @@
 import requests
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Dict
 import os
 import asyncio
@@ -9,6 +9,7 @@ import logging
 from dotenv import load_dotenv
 from itertools import permutations
 import numpy as np
+import random
 # import polyline
 
 load_dotenv()
@@ -56,108 +57,91 @@ class RouteOptimizer:
             raise
 
     async def get_traffic_data(self, lat: float, lon: float) -> Dict:
-        """Get traffic data from TomTom API for a specific location"""
+        """Get traffic data for a location"""
         try:
-            url = f"{self.tomtom_traffic_url}"
-            params = {
-                'key': self.tomtom_api_key,
-                'point': f"{lat},{lon}",
-                'unit': 'KMPH'
-            }
+            # Simulated traffic data - in real app, this would call a traffic API
+            speed = random.randint(8, 45)  # Speed in km/h
             
-            logger.debug(f"Requesting traffic data for point: {lat},{lon}")
-            response = requests.get(url, params=params, timeout=10)
-            response.raise_for_status()
+            # Determine congestion level based on speed
+            if speed < 15:
+                congestion_level = 'High'
+            elif speed < 25:
+                congestion_level = 'Medium'
+            else:
+                congestion_level = 'Low'
             
-            data = response.json()
-            
-            if 'flowSegmentData' in data:
-                flow_data = data['flowSegmentData']
-                current_speed = flow_data.get('currentSpeed', 0)
-                free_flow_speed = flow_data.get('freeFlowSpeed', 0)
-                
-                # Determine congestion level based on current speed
-                congestion_level = (
-                    "High" if current_speed < 20
-                    else "Medium" if current_speed < 40
-                    else "Low"
-                )
-                
-                return {
-                    "current_speed": current_speed,
-                    "free_flow_speed": free_flow_speed,
-                    "congestion_level": congestion_level,
-                    "timestamp": datetime.now().isoformat(),
-                    "coordinates": {
-                        "lat": lat,
-                        "lon": lon
-                    }
-                }
-            
-            # Default return if no flow data
             return {
-                "current_speed": 30,
-                "free_flow_speed": 40,
-                "congestion_level": "Unknown",
-                "timestamp": datetime.now().isoformat(),
-                "coordinates": {
-                    "lat": lat,
-                    "lon": lon
-                }
+                'current_speed': speed,
+                'congestion_level': congestion_level,
+                'timestamp': datetime.now().isoformat()
             }
-            
         except Exception as e:
-            logger.error(f"Traffic data fetch failed: {str(e)}")
-            return {
-                "current_speed": 30,
-                "free_flow_speed": 40,
-                "congestion_level": "Error",
-                "timestamp": datetime.now().isoformat(),
-                "coordinates": {
-                    "lat": lat,
-                    "lon": lon
-                }
-            }
+            logger.error(f"Failed to get traffic data: {str(e)}")
+            raise
 
     async def optimize_route(self, depot: Dict, destinations: List[Dict]) -> Dict:
-        """Optimize a single route"""
         try:
             logger.info("Starting route optimization")
             
-            # Format waypoints for OSRM
             waypoints = [depot] + destinations
-            
-            # Get route from OSRM
             route_data = await self.get_osm_route(waypoints)
             
-            # Get traffic data for route segments
+            # Get traffic data and calculate ETA
             traffic_segments = []
             coordinates = route_data['geometry']['coordinates']
+            total_delay_minutes = 0
             
-            # Sample points along the route for traffic data
-            num_samples = min(len(coordinates), 10)  # Take up to 10 sample points
+            # Sample points for traffic analysis
+            num_samples = 8
             sample_indices = np.linspace(0, len(coordinates)-1, num_samples, dtype=int)
             
             for idx in sample_indices:
                 coord = coordinates[idx]
                 traffic = await self.get_traffic_data(coord[1], coord[0])
                 
-                # Calculate distance from start for this segment
-                distance_covered = route_data['distance'] * (idx / len(coordinates))
+                # Calculate segment delay based on speed
+                segment_distance = route_data['distance'] / num_samples
+                expected_time = (segment_distance / 1000) / 30 * 60  # Expected time at 30 km/h
+                actual_time = (segment_distance / 1000) / traffic['current_speed'] * 60
+                segment_delay = actual_time - expected_time
+                total_delay_minutes += segment_delay
                 
                 traffic_segments.append({
-                    'timestamp': datetime.now().isoformat(),
-                    'distance_covered': distance_covered,
+                    'timestamp': traffic['timestamp'],
+                    'distance_covered': (route_data['distance'] * idx) / len(coordinates),
                     'current_speed': traffic['current_speed'],
                     'congestion_level': traffic['congestion_level']
                 })
             
-            # Prepare response
+            # Count congestion levels
+            congestion_counts = {
+                'High': len([s for s in traffic_segments if s['congestion_level'] == 'High']),
+                'Medium': len([s for s in traffic_segments if s['congestion_level'] == 'Medium']),
+                'Low': len([s for s in traffic_segments if s['congestion_level'] == 'Low'])
+            }
+            
+            total_segments = len(traffic_segments)
+            traffic_summary = (
+                f"{(congestion_counts['Low']/total_segments*100):.0f}% Clear, "
+                f"{(congestion_counts['Medium']/total_segments*100):.0f}% Moderate, "
+                f"{(congestion_counts['High']/total_segments*100):.0f}% Heavy"
+            )
+            
+            # Calculate ETA
+            base_duration_minutes = route_data['duration'] / 60
+            total_estimated_minutes = base_duration_minutes + max(0, total_delay_minutes)
+            eta = datetime.now() + timedelta(minutes=int(total_estimated_minutes))
+            
             optimized_route = {
                 'geometry': route_data['geometry'],
-                'distance': route_data['distance'],  # Total distance in meters
-                'duration': route_data['duration'],  # Total duration in seconds
+                'distance': route_data['distance'],
+                'duration': route_data['duration'],
                 'traffic_segments': traffic_segments,
+                'eta': eta.isoformat(),
+                'traffic_conditions': {
+                    'summary': traffic_summary,
+                    'delay_minutes': max(0, int(total_delay_minutes))
+                },
                 'stops': [
                     {
                         'number': i + 1,
