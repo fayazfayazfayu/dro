@@ -7,6 +7,7 @@ const authRoutes = require('./routes/auth.routes');
 const userRoutes = require('./routes/user.routes');
 const vehicleRoutes = require('./routes/vehicle.routes');
 const routeRoutes = require('./routes/route.routes');
+const mlRoutes = require('./routes/ml.routes');
 
 // Load environment variables
 dotenv.config();
@@ -24,6 +25,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/vehicles', vehicleRoutes);
 app.use('/api/routes', routeRoutes);
+app.use('/api/ml', mlRoutes);
 
 // Basic route for testing
 app.get('/', (req, res) => {

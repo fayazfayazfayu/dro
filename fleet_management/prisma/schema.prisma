@@ -52,6 +52,7 @@ model Route {
   vehicleId   String   // Assigned vehicle
   user        User     @relation(fields: [userId], references: [id])
   vehicle     Vehicle  @relation(fields: [vehicleId], references: [id])
+  routeHistory    RouteHistory[]
 }
 
 enum RouteStatus {
@@ -59,4 +60,38 @@ enum RouteStatus {
   IN_PROGRESS
   COMPLETED
   CANCELLED
+}
+
+model RouteHistory {
+  id              String    @id @default(uuid())
+  routeId         String
+  timestamp       DateTime  @default(now())
+  actualDistance  Float     // Actual distance covered in km
+  actualDuration  Float     // Actual duration in minutes
+  startTime       DateTime
+  endTime         DateTime
+  numberOfStops   Int
+  route           Route     @relation(fields: [routeId], references: [id])
+  trafficData     TrafficData[]
+  deliveryOutcome DeliveryOutcome?
+}
+
+model TrafficData {
+  id              String    @id @default(uuid())
+  routeHistoryId  String
+  timestamp       DateTime  @default(now())
+  congestionLevel String    // LOW, MEDIUM, HIGH
+  averageSpeed    Float     // km/h
+  location        Json      // {lat: float, lon: float}
+  routeHistory    RouteHistory @relation(fields: [routeHistoryId], references: [id])
+}
+
+model DeliveryOutcome {
+  id              String    @id @default(uuid())
+  routeHistoryId  String    @unique
+  onTime          Boolean
+  delayMinutes    Int      @default(0)
+  success         Boolean
+  notes           String?
+  routeHistory    RouteHistory @relation(fields: [routeHistoryId], references: [id])
 }

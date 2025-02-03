@@ -3,10 +3,12 @@ import RouteMap from './RouteMap';
 import PlaceSearch from './PlaceSearch';
 import axios from 'axios';
 import styled from 'styled-components';
+import RouteOptimizer from './RouteOptimizer';
+import MLInsights from './MLInsights';
 
 const PlannerContainer = styled.div`
   display: grid;
-  grid-template-columns: 300px 1fr;
+  grid-template-columns: 1fr;
   gap: 20px;
   padding: 20px;
 `;
@@ -58,6 +60,8 @@ const RoutePlanner = () => {
   const [depot, setDepot] = useState(null);
   const [destinations, setDestinations] = useState([]);
   const [routeData, setRouteData] = useState(null);
+  const [currentRoute, setCurrentRoute] = useState(null);
+  const [showMLInsights, setShowMLInsights] = useState(false);
 
   const handleDepotSelect = (place) => {
     setDepot({
@@ -92,48 +96,27 @@ const RoutePlanner = () => {
         departure_time: new Date().toISOString()
       });
       setRouteData(response.data);
+      setCurrentRoute(response.data);
+      setShowMLInsights(true);
     } catch (error) {
       console.error('Route calculation failed:', error);
       alert('Failed to calculate route');
     }
   };
 
+  const handleRouteUpdate = (updatedRoute) => {
+    setCurrentRoute(updatedRoute);
+    setShowMLInsights(true);
+  };
+
   return (
     <PlannerContainer>
-      <LocationsPanel>
-        <h3>Depot Location</h3>
-        <PlaceSearch onPlaceSelect={handleDepotSelect} />
-        {depot && (
-          <LocationItem>
-            <span>{depot.name}</span>
-            <button onClick={() => setDepot(null)}>Remove</button>
-          </LocationItem>
-        )}
-
-        <h3>Delivery Locations</h3>
-        <PlaceSearch onPlaceSelect={handleDestinationSelect} />
-        <LocationList>
-          {destinations.map((dest, index) => (
-            <LocationItem key={index}>
-              <span>{dest.name}</span>
-              <button onClick={() => removeDestination(index)}>Remove</button>
-            </LocationItem>
-          ))}
-        </LocationList>
-
-        <CalculateButton 
-          onClick={calculateRoute}
-          disabled={!depot || destinations.length === 0}
-        >
-          Calculate Route
-        </CalculateButton>
-      </LocationsPanel>
-
-      <RouteMap 
-        depot={depot}
-        destinations={destinations}
-        routeData={routeData}
+      <RouteMap route={currentRoute} />
+      <RouteOptimizer 
+        route={currentRoute}
+        onUpdateRoute={handleRouteUpdate}
       />
+      {showMLInsights && <MLInsights route={currentRoute} />}
     </PlannerContainer>
   );
 };
