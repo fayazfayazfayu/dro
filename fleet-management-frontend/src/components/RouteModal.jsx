@@ -1,6 +1,7 @@
 import React from 'react';
 import styled from 'styled-components';
 import RouteMap from './RouteMap';
+import TrafficTable from './TrafficTable';
 
 const ModalOverlay = styled.div`
   position: fixed;
@@ -38,16 +39,21 @@ const CloseButton = styled.button`
   }
 `;
 
-const MapContainer = styled.div`
-  width: 100%;
-  height: calc(100% - 40px);
+const ContentLayout = styled.div`
+  display: flex;
+  height: 100%;
+  gap: 20px;
   margin-top: 20px;
+`;
+
+const MapContainer = styled.div`
+  flex: 1;
+  height: 70vh;
 `;
 
 const RouteModal = ({ isOpen, onClose, route, optimizedRoute }) => {
   if (!isOpen) return null;
 
-  // Parse coordinates from route data
   const [startLat, startLon] = route.startPoint.split(" ").map(coord => parseFloat(coord));
   const [endLat, endLon] = route.endPoint.split(" ").map(coord => parseFloat(coord));
 
@@ -68,13 +74,16 @@ const RouteModal = ({ isOpen, onClose, route, optimizedRoute }) => {
       <ModalContent onClick={e => e.stopPropagation()}>
         <CloseButton onClick={onClose}>&times;</CloseButton>
         <h2>Route Details: {route.name}</h2>
-        <MapContainer>
-          <RouteMap
-            depot={depot}
-            destinations={destinations}
-            routeData={optimizedRoute}
-          />
-        </MapContainer>
+        <ContentLayout>
+          <MapContainer>
+            <RouteMap
+              depot={depot}
+              destinations={destinations}
+              routeData={optimizedRoute}
+            />
+          </MapContainer>
+          <TrafficTable trafficData={optimizedRoute} />
+        </ContentLayout>
       </ModalContent>
     </ModalOverlay>
   );

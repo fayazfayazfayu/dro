@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from typing import List, Optional
 import logging
 from .route_optimizer import RouteOptimizer  # Assuming RouteOptimizer is defined elsewhere
+from datetime import datetime
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -68,4 +69,35 @@ async def get_optimized_route(route_id: int):
         return {"route_id": route_id, "optimized_route": optimized_route}
     except Exception as e:
         logger.error(f"Route optimization failed: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+# GET: Live route updates
+@app.get("/route-updates/{route_id}")
+async def get_route_updates(
+    route_id: int,
+    current_lat: float,
+    current_lon: float
+):
+    try:
+        logger.info(f"Received update request at {datetime.now().strftime('%H:%M:%S')} for route {route_id}")
+        
+        if route_id >= len(routes_store):
+            raise HTTPException(status_code=404, detail="Route not found")
+        
+        current_position = {
+            "lat": current_lat,
+            "lon": current_lon
+        }
+        
+        optimizer = RouteOptimizer()
+        updates = await optimizer.get_live_updates(
+            str(route_id),
+            current_position
+        )
+        
+        logger.info(f"Route updates retrieved for route_id {route_id}")
+        return updates
+        
+    except Exception as e:
+        logger.error(f"Failed to get route updates: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
