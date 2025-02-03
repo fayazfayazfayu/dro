@@ -66,6 +66,17 @@ const AlertIcon = styled.div`
     }
 `;
 
+const UpdateIndicator = styled.div`
+  position: absolute;
+  bottom: 10px;
+  right: 10px;
+  background: rgba(255, 255, 255, 0.9);
+  padding: 5px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  z-index: 1000;
+`;
+
 const getCongestionStyle = (level) => {
   switch (level) {
     case 'High':
@@ -314,52 +325,67 @@ const RouteMap = ({ depot, destinations, routeData }) => {
     }
   };
 
-  // Add new useEffect for route updates
-  useEffect(() => {
-    if (!routeData?.route_id) return;
-
-    const fetchRouteUpdate = async () => {
-      try {
-        const response = await fetch(`http://localhost:8000/route-update/${routeData.route_id}`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            depot: depot,
-            destinations: destinations,
-            current_route: routeData
-          }),
-        });
-
-        const updatedRoute = await response.json();
-        
-        if (updatedRoute.needs_rerouting) {
-          // Update route display with new route
-          updateRouteDisplay(updatedRoute.alternative_route);
-          
-          // Show alert about rerouting
-          const alertMessage = updatedRoute.traffic_alerts
-            .map(alert => alert.message)
-            .join('\n');
-          alert(`Route updated due to traffic conditions:\n${alertMessage}`);
-        }
-
-        setLastUpdateTime(new Date().toLocaleTimeString());
-      } catch (error) {
-        console.error('Failed to update route:', error);
+  // Update the fetchRouteUpdate function with better logging
+  const fetchRouteUpdate = async () => {
+    try {
+      console.log('Fetching route update...', new Date().toLocaleTimeString());
+      
+      if (!routeData || !routeData.route_id) {
+        console.error('No route data available for update');
+        return;
       }
-    };
 
-    // Set up 30-second interval for updates
-    const intervalId = setInterval(fetchRouteUpdate, 30000);
-    setRouteUpdateInterval(intervalId);
+      const response = await fetch(`http://localhost:8000/route-update/${routeData.route_id}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          depot: depot,
+          destinations: destinations,
+          current_route: routeData
+        }),
+      });
 
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const data = await response.json();
+      console.log('Route update received:', {
+        timestamp: new Date().toLocaleTimeString(),
+        trafficSegments: data.optimized_route.traffic_segments?.length,
+        trafficConditions: data.optimized_route.traffic_conditions
+      });
+      
+      if (data.optimized_route) {
+        updateRouteDisplay(data.optimized_route);
+        setLastUpdateTime(new Date().toLocaleTimeString());
+      }
+    } catch (error) {
+      console.error('Failed to update route:', error);
+    }
+  };
+
+  // Update the useEffect for route updates with immediate first update
+  useEffect(() => {
+    if (!routeData?.route_id || !depot || !destinations.length) {
+      console.log('Missing required data for updates');
+      return;
+    }
+
+    console.log('Setting up route updates...');
+    
     // Initial fetch
     fetchRouteUpdate();
 
+    // Set up interval for updates - every 10 seconds
+    const intervalId = setInterval(fetchRouteUpdate, 10000);
+    console.log('Update interval set:', intervalId);
+
     // Cleanup interval on unmount
     return () => {
+      console.log('Cleaning up update interval:', intervalId);
       if (intervalId) {
         clearInterval(intervalId);
       }
@@ -427,6 +453,11 @@ const RouteMap = ({ depot, destinations, routeData }) => {
             <TrafficTable segments={routeData.traffic_segments} />
           )}
         </div>
+      )}
+      {lastUpdateTime && (
+        <UpdateIndicator>
+          Last Update: {lastUpdateTime}
+        </UpdateIndicator>
       )}
     </div>
   );

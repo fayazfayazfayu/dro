@@ -163,33 +163,28 @@ class RouteOptimizer:
             raise
 
     async def get_route_update(self, route_id: str, current_route: Dict) -> Dict:
-        """Get updated route based on current traffic conditions"""
+        """Get updated route information with current traffic conditions"""
         try:
-            # Check current traffic conditions
-            conditions = await self.check_route_conditions(current_route)
+            logger.info(f"Getting route update for route {route_id} at {datetime.now().strftime('%H:%M:%S')}")
             
-            response = {
-                'needs_rerouting': conditions['needs_rerouting'],
-                'traffic_alerts': conditions['traffic_alerts'],
-                'timestamp': datetime.now().isoformat()
+            if not current_route.get('depot') or not current_route.get('destinations'):
+                logger.error("Missing required route information")
+                raise ValueError("Missing required route information")
+
+            # Get fresh route optimization with current traffic
+            updated_route = await self.optimize_route(
+                depot=current_route['depot'],
+                destinations=current_route['destinations']
+            )
+            
+            logger.info(f"Route {route_id} updated successfully with {len(updated_route['traffic_segments'])} traffic segments")
+            
+            return {
+                "route_id": route_id,
+                "optimized_route": updated_route,
+                "timestamp": datetime.now().isoformat()
             }
-
-            # If heavy traffic detected, calculate alternative route
-            if conditions['needs_rerouting']:
-                current_position = current_route['geometry']['coordinates'][0]
-                destination = current_route['geometry']['coordinates'][-1]
-                
-                alternative_route = await self.calculate_alternative_route(
-                    current_route,
-                    {'lat': current_position[1], 'lon': current_position[0]},
-                    {'lat': destination[1], 'lon': destination[0]}
-                )
-                
-                response['alternative_route'] = alternative_route
-
-            logger.info(f"Route update completed for route {route_id}")
-            return response
-
+            
         except Exception as e:
             logger.error(f"Route update failed: {str(e)}")
             raise

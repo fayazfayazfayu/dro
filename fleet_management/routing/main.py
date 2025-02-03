@@ -135,9 +135,22 @@ async def get_route_updates(
 async def update_route(route_id: str, current_route: Dict):
     try:
         logger.info(f"Received route update request for route {route_id}")
+        
+        # Validate the current_route data
+        if not current_route:
+            raise HTTPException(status_code=400, detail="Missing route data")
+            
         optimizer = RouteOptimizer()
-        updated_route = await optimizer.get_route_update(route_id, current_route)
-        return updated_route
+        updated_route = await optimizer.optimize_route(
+            depot=current_route.get('depot', {}),
+            destinations=current_route.get('destinations', [])
+        )
+        
+        return {
+            "route_id": route_id,
+            "optimized_route": updated_route
+        }
+        
     except Exception as e:
         logger.error(f"Route update failed: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
