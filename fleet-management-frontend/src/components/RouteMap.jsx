@@ -41,40 +41,55 @@ const RouteMap = ({ depot, destinations, routeData }) => {
   useEffect(() => {
     if (!mapRef.current) return;
 
-    // Initialize map
+    // Initialize map only once
     leafletMap.current = L.map(mapRef.current).setView([51.505, -0.09], 13);
 
     // Add OpenStreetMap tiles
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© OpenStreetMap contributors'
+      attribution: '© OpenStreetMap contributors',
     }).addTo(leafletMap.current);
 
     return () => {
+      // Cleanup map on unmount
       if (leafletMap.current) {
         leafletMap.current.remove();
+        leafletMap.current = null;
       }
     };
   }, []);
 
   useEffect(() => {
-    if (!leafletMap.current || !depot || !destinations.length) return;
+    if (!leafletMap.current || !depot || destinations.length === 0) return;
 
-    // Clear existing routing control
-    if (routingControl.current) {
-      leafletMap.current.removeControl(routingControl.current);
+    // Clean up previous routing control if it exists
+    if (routingControl.current && leafletMap.current) {
+      try {
+        if (leafletMap.current && routingControl.current) {
+          leafletMap.current.removeControl(routingControl.current);
+        }
+      } catch (error) {
+        console.error('Error removing routing control:', error);
+      }
+      routingControl.current = null; // Reset routing control to avoid conflict
+    }
+
+    // Clear previous markers and lines from the map
+    if (leafletMap.current) {
+      leafletMap.current.eachLayer(layer => {
+        if (layer instanceof L.Marker || layer instanceof L.Polyline) {
+          leafletMap.current.removeLayer(layer);
+        }
+      });
     }
 
     // Create waypoints array
     const waypoints = [
       L.latLng(depot.lat, depot.lon),
-      ...destinations.map(dest => L.latLng(dest.lat, dest.lon))
+      ...destinations.map(dest => L.latLng(dest.lat, dest.lon)),
     ];
 
-    // Add markers
-    const bounds = L.latLngBounds(waypoints);
-    
     // Add depot marker
-    L.marker([depot.lat, depot.lon])
+    const depotMarker = L.marker([depot.lat, depot.lon])
       .bindPopup(`Depot: ${depot.name}`)
       .addTo(leafletMap.current);
 
@@ -85,20 +100,43 @@ const RouteMap = ({ depot, destinations, routeData }) => {
         .addTo(leafletMap.current);
     });
 
-    // Add routing
-    routingControl.current = L.Routing.control({
-      waypoints: waypoints,
-      routeWhileDragging: true,
-      showAlternatives: true,
-      fitSelectedRoutes: true,
-      lineOptions: {
-        styles: [{ color: '#4A90E2', weight: 6 }]
-      }
-    }).addTo(leafletMap.current);
+    // Initialize routing control if not already initialized
+    if (!routingControl.current) {
+      routingControl.current = L.Routing.control({
+        waypoints: waypoints,
+        routeWhileDragging: true,
+        showAlternatives: true,
+        fitSelectedRoutes: true,
+        lineOptions: {
+          styles: [{ color: '#4A90E2', weight: 6 }],
+        },
+      }).addTo(leafletMap.current);
+    }
 
-    // Fit bounds with padding
+    // Fit map bounds
+    const bounds = L.latLngBounds(waypoints);
     leafletMap.current.fitBounds(bounds, { padding: [50, 50] });
 
+    // Cleanup routing control when component unmounts or dependencies change
+    return () => {
+      if (leafletMap.current && routingControl.current) {
+        try {
+          leafletMap.current.removeControl(routingControl.current);
+        } catch (error) {
+          console.error('Error during cleanup of routing control:', error);
+        }
+        routingControl.current = null; // Reset to avoid conflicts
+      }
+
+      // Cleanup all layers on unmount
+      if (leafletMap.current) {
+        leafletMap.current.eachLayer(layer => {
+          if (layer instanceof L.Marker || layer instanceof L.Polyline) {
+            leafletMap.current.removeLayer(layer);
+          }
+        });
+      }
+    };
   }, [depot, destinations]);
 
   return (
@@ -114,4 +152,4 @@ const RouteMap = ({ depot, destinations, routeData }) => {
   );
 };
 
-export default RouteMap; 
+export default RouteMap;

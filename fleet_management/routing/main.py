@@ -1,16 +1,9 @@
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
-import asyncio
-from datetime import datetime
-import os
-from dotenv import load_dotenv
-from .route_optimizer import RouteOptimizer
 import logging
-
-# Load environment variables
-load_dotenv()
+from .route_optimizer import RouteOptimizer  # Assuming RouteOptimizer is defined elsewhere
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -21,12 +14,13 @@ app = FastAPI()
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["http://localhost:3000"],  # Update if needed
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# Define models
 class Location(BaseModel):
     lat: float
     lon: float
@@ -37,31 +31,41 @@ class RouteRequest(BaseModel):
     destinations: List[Location]
     departure_time: Optional[str] = None
 
-@app.post("/calculate-route")
-async def calculate_route(route_request: RouteRequest):
+routes_store = []  # Temporary in-memory storage for routes
+
+# POST: Set route
+@app.post("/set-route")
+async def set_route(route_request: RouteRequest):
     try:
         logger.info(f"Received route request: {route_request}")
-        optimizer = RouteOptimizer()
-        route_data = await optimizer.optimize_route(
+        route_id = len(routes_store)
+        routes_store.append(route_request)
+        # Return both route_id and initial route data
+        return {
+            "route_id": route_id,
+            "message": "Route stored successfully",
+            "initial_route": route_request.dict()
+        }
+    except Exception as e:
+        logger.error(f"Failed to store route: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+# GET: Calculate and return optimized route
+@app.get("/optimized-route/{route_id}")
+async def get_optimized_route(route_id: int):
+    try:
+        if route_id >= len(routes_store):
+            raise HTTPException(status_code=404, detail="Route not found")
+        
+        route_request = routes_store[route_id]
+        optimizer = RouteOptimizer()  
+        optimized_route = await optimizer.optimize_route(
             depot=route_request.depot.dict(),
             destinations=[dest.dict() for dest in route_request.destinations]
         )
-        logger.info("Route calculation successful")
-        return route_data
+        
+        logger.info(f"Optimized route calculated for route_id {route_id}")
+        return {"route_id": route_id, "optimized_route": optimized_route}
     except Exception as e:
-        logger.error(f"Route calculation failed: {str(e)}")
+        logger.error(f"Route optimization failed: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
-
-@app.websocket("/route-updates/{route_id}")
-async def route_updates(websocket: WebSocket, route_id: str):
-    await websocket.accept()
-    optimizer = RouteOptimizer()
-    logger.info(f"WebSocket connection established for route {route_id}")
-    
-    try:
-        while True:
-            update = await optimizer.get_route_update(route_id)
-            await websocket.send_json(update)
-            await asyncio.sleep(30)
-    except WebSocketDisconnect:
-        logger.info(f"Client disconnected from route {route_id}") 

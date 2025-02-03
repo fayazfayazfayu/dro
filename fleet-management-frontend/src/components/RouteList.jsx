@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import styled from 'styled-components';
 import axios from 'axios';
+import RouteModal from './RouteModal';
 
 const Table = styled.table`
   width: 100%;
@@ -24,19 +25,30 @@ const TableCell = styled.td`
   border: 1px solid #ddd;
 `;
 
+const Button = styled.button`
+  background-color: #1A1B4B;
+  color: white;
+  padding: 5px 10px;
+  border: none;
+  cursor: pointer;
+  &:hover {
+    background-color: #2C2D5B;
+  }
+`;
+
 const RouteList = ({ searchTerm }) => {
   const [routes, setRoutes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [optimizedRoutes, setOptimizedRoutes] = useState({});
+  const [selectedRoute, setSelectedRoute] = useState(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
 
   useEffect(() => {
     const fetchRoutes = async () => {
-      const token = localStorage.getItem('token');
       try {
         const response = await axios.get('http://localhost:5000/api/routes', {
-          headers: {
-            Authorization: `Bearer ${localStorage.getItem('adminToken')}`,
-          }, // Include the token in the headers
+          headers: { Authorization: `Bearer ${localStorage.getItem('adminToken')}` },
         });
         setRoutes(response.data);
       } catch (err) {
@@ -49,51 +61,70 @@ const RouteList = ({ searchTerm }) => {
     fetchRoutes();
   }, []);
 
-  const handleDelete = async (id) => {
-    const token = localStorage.getItem('token');
-    try {
-      await axios.delete(`http://localhost:5000/api/routes/${id}`, {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem('adminToken')}`,
-        }, // Include the token in the headers
-      });
-      setRoutes(routes.filter(route => route.id !== id)); // Remove the deleted route from the state
-      alert('Route deleted successfully!');
-    } catch (err) {
-      console.error('Error deleting route:', err);
-      alert('Failed to delete route. Please try again.');
-    }
-  };
-
   const handleStatusChange = async (id, newStatus) => {
-    const token = localStorage.getItem('token');
     try {
       await axios.patch(`http://localhost:5000/api/routes/${id}/status`, { status: newStatus }, {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem('adminToken')}`,
-        }, // Include the token in the headers
+        headers: { Authorization: `Bearer ${localStorage.getItem('adminToken')}` },
       });
+  
       setRoutes(routes.map(route => (route.id === id ? { ...route, status: newStatus } : route)));
-      alert('Route status updated successfully!');
+  
+      if (newStatus === "IN_PROGRESS") {
+        const route = routes.find(r => r.id === id);
+        if (route) {
+          const [startLat, startLon] = route.startPoint.split(" ").map(coord => parseFloat(coord));
+          const [endLat, endLon] = route.endPoint.split(" ").map(coord => parseFloat(coord));
+  
+          const requestBody = {
+            depot: { lat: startLat, lon: startLon, name: route.name },
+            destinations: [{ lat: endLat, lon: endLon, name: route.name }]
+          };
+  
+          // Set route and get route_id
+          const setRouteResponse = await axios.post('http://localhost:8000/set-route', requestBody);
+          const routeId = setRouteResponse.data.route_id;
+  
+          // Get optimized route using the route_id
+          const optimizedResponse = await axios.get(`http://localhost:8000/optimized-route/${routeId}`);
+          setOptimizedRoutes(prev => ({ ...prev, [id]: optimizedResponse.data.optimized_route }));
+          
+          alert(`Route optimized successfully! Route ID: ${routeId}`);
+        }
+      }
     } catch (err) {
-      console.error('Error updating route status:', err);
-      alert('Failed to update route status. Please try again.');
+      console.error('Error updating status:', err);
+      alert('Failed to update route status.');
     }
   };
 
-  const handleEdit = (id) => {
-    // Implement edit functionality (e.g., open a modal or navigate to an edit page)
-    alert(`Edit functionality for route ID: ${id} is not implemented yet.`);
-  };
+  const handleOptimize = async (id) => {
+    try {
+      const route = routes.find(r => r.id === id);
+      if (route) {
+        const [startLat, startLon] = route.startPoint.split(" ").map(coord => parseFloat(coord));
+        const [endLat, endLon] = route.endPoint.split(" ").map(coord => parseFloat(coord));
 
-  const handleOptimize = (id) => {
-    // Implement optimize functionality
-    alert(`Optimize functionality for route ID: ${id} is not implemented yet.`);
-  };
+        const requestBody = {
+          depot: { lat: startLat, lon: startLon, name: route.name },
+          destinations: [{ lat: endLat, lon: endLon, name: route.name }]
+        };
 
-  const handleAssign = (id) => {
-    // Implement assign functionality
-    alert(`Assign functionality for route ID: ${id} is not implemented yet.`);
+        // Set route and get route_id
+        const setRouteResponse = await axios.post('http://localhost:8000/set-route', requestBody);
+        const routeId = setRouteResponse.data.route_id;
+
+        // Get optimized route using the route_id
+        const optimizedResponse = await axios.get(`http://localhost:8000/optimized-route/${routeId}`);
+        setOptimizedRoutes(prev => ({ ...prev, [id]: optimizedResponse.data.optimized_route }));
+        
+        // Open modal with route details
+        setSelectedRoute(route);
+        setIsModalOpen(true);
+      }
+    } catch (err) {
+      console.error('Error fetching optimized route:', err);
+      alert('Failed to retrieve optimized route.');
+    }
   };
 
   const filteredRoutes = routes.filter(route =>
@@ -106,47 +137,53 @@ const RouteList = ({ searchTerm }) => {
   if (error) return <p>{error}</p>;
 
   return (
-    <Table>
-      <thead>
-        <tr>
-          <TableHeader>Route Name</TableHeader>
-          <TableHeader>Start Point</TableHeader>
-          <TableHeader>End Point</TableHeader>
-          <TableHeader>Distance</TableHeader>
-          <TableHeader>Duration</TableHeader>
-          <TableHeader>Status</TableHeader>
-          <TableHeader>Actions</TableHeader>
-        </tr>
-      </thead>
-      <tbody>
-        {filteredRoutes.map(route => (
-          <TableRow key={route.id}>
-            <TableCell>{route.name}</TableCell>
-            <TableCell>{route.startPoint}</TableCell>
-            <TableCell>{route.endPoint}</TableCell>
-            <TableCell>{route.distance} km</TableCell>
-            <TableCell>{route.duration} min</TableCell>
-            <TableCell>
-              <select
-                value={route.status}
-                onChange={(e) => handleStatusChange(route.id, e.target.value)}
-              >
-                <option value="PENDING">PENDING</option>
-                <option value="IN_PROGRESS">IN_PROGRESS</option>
-                <option value="COMPLETED">COMPLETED</option>
-              </select>
-            </TableCell>
-            <TableCell>
-              <button onClick={() => handleEdit(route.id)}>Edit</button>
-              <button onClick={() => handleDelete(route.id)}>Delete</button>
-              <button onClick={() => handleOptimize(route.id)}>Optimize</button>
-              <button onClick={() => handleAssign(route.id)}>Assign</button>
-            </TableCell>
-          </TableRow>
-        ))}
-      </tbody>
-    </Table>
+    <>
+      <Table>
+        <thead>
+          <tr>
+            <TableHeader>Route Name</TableHeader>
+            <TableHeader>Start Point</TableHeader>
+            <TableHeader>End Point</TableHeader>
+            <TableHeader>Distance</TableHeader>
+            <TableHeader>Duration</TableHeader>
+            <TableHeader>Status</TableHeader>
+            <TableHeader>Optimized Route</TableHeader>
+          </tr>
+        </thead>
+        <tbody>
+          {filteredRoutes.map(route => (
+            <TableRow key={route.id}>
+              <TableCell>{route.name}</TableCell>
+              <TableCell>{route.startPoint}</TableCell>
+              <TableCell>{route.endPoint}</TableCell>
+              <TableCell>{route.distance} km</TableCell>
+              <TableCell>{route.duration} min</TableCell>
+              <TableCell>
+                <select
+                  value={route.status}
+                  onChange={(e) => handleStatusChange(route.id, e.target.value)}
+                >
+                  <option value="PENDING">PENDING</option>
+                  <option value="IN_PROGRESS">IN_PROGRESS</option>
+                  <option value="COMPLETED">COMPLETED</option>
+                </select>
+              </TableCell>
+              <TableCell>
+                <Button onClick={() => handleOptimize(route.id)}>Route</Button>
+              </TableCell>
+            </TableRow>
+          ))}
+        </tbody>
+      </Table>
+
+      <RouteModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        route={selectedRoute}
+        optimizedRoute={selectedRoute ? optimizedRoutes[selectedRoute.id] : null}
+      />
+    </>
   );
 };
 
-export default RouteList; 
+export default RouteList;

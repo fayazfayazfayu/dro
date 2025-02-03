@@ -6,9 +6,12 @@ import os
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import logging
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Set up logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)  # Changed to DEBUG level for more detailed logs
 logger = logging.getLogger(__name__)
 
 class RouteOptimizer:
@@ -16,7 +19,8 @@ class RouteOptimizer:
         self.osrm_url = "http://router.project-osrm.org/route/v1/driving"
         self.tomtom_api_key = os.getenv("TOMTOM_API_KEY")
         if not self.tomtom_api_key:
-            logger.error("TomTom API key not found in environment variables!")
+            raise ValueError("TomTom API key not found in environment variables!")
+
         else:
             logger.info("TomTom API key loaded successfully")
         
@@ -31,12 +35,12 @@ class RouteOptimizer:
                 'key': self.tomtom_api_key,
                 'point': f"{lat},{lon}"
             }
-            logger.info(f"Requesting traffic data for point: {lat},{lon}")
+            logger.debug(f"Requesting traffic data for point: {lat},{lon} with params: {params}")
             response = requests.get(url, params=params)
             response.raise_for_status()
             
             traffic_data = response.json()
-            logger.info(f"Received traffic data: {json.dumps(traffic_data, indent=2)}")
+            logger.debug(f"Received traffic data: {json.dumps(traffic_data, indent=2)}")
             return traffic_data
             
         except Exception as e:
@@ -47,10 +51,7 @@ class RouteOptimizer:
         """Get route using TomTom Routing API"""
         try:
             # Format waypoints for TomTom API
-            waypoint_string = ":".join([
-                f"{point['lat']},{point['lon']}"
-                for point in waypoints
-            ])
+            waypoint_string = ":".join([f"{point['lat']},{point['lon']}" for point in waypoints])
             
             url = f"{self.tomtom_routing_url}/{waypoint_string}/json"
             
@@ -60,13 +61,13 @@ class RouteOptimizer:
                 'travelMode': 'truck',
                 'routeType': 'fastest'
             }
-            
-            logger.info(f"Requesting route from TomTom API: {url}")
+
+            logger.debug(f"Requesting route from TomTom API with URL: {url} and params: {params}")
             response = requests.get(url, params=params)
             response.raise_for_status()
             
             route_data = response.json()
-            logger.info(f"Received route data from TomTom")
+            logger.debug(f"Received route data from TomTom: {json.dumps(route_data, indent=2)}")
             return route_data
             
         except Exception as e:
@@ -76,6 +77,7 @@ class RouteOptimizer:
     def calculate_traffic_delay(self, traffic_data: List[Dict]) -> float:
         """Calculate delay factor based on traffic data"""
         if not traffic_data:
+            logger.debug("No traffic data found, returning default delay factor of 1.0")
             return 1.0
 
         total_delay = 0
@@ -86,21 +88,25 @@ class RouteOptimizer:
                 if free_flow_speed > 0:
                     delay = free_flow_speed / current_speed if current_speed > 0 else 2.0
                     total_delay += delay
+                    logger.debug(f"Calculated delay for point: {delay}")
 
-        return max(1.0, total_delay / len(traffic_data))
+        delay_factor = max(1.0, total_delay / len(traffic_data))
+        logger.debug(f"Final calculated traffic delay factor: {delay_factor}")
+        return delay_factor
 
     async def optimize_route(self, depot: Dict, destinations: List[Dict]) -> Dict:
         """Optimize route considering traffic conditions"""
         try:
-            logger.info("Starting route optimization")
-            logger.info(f"Depot: {depot}")
-            logger.info(f"Destinations: {destinations}")
+            logger.debug("Starting route optimization")
+            logger.debug(f"Depot: {depot}")
+            logger.debug(f"Destinations: {destinations}")
 
             # Get route from TomTom
             waypoints = [depot] + destinations + [depot]  # Include return to depot
             route_data = await self.get_tomtom_route(waypoints)
             
             if not route_data or 'routes' not in route_data:
+                logger.error("No route found in TomTom response")
                 raise ValueError("No route found in TomTom response")
 
             route = route_data['routes'][0]
@@ -111,20 +117,23 @@ class RouteOptimizer:
                 traffic = await self.get_traffic_data(point['lat'], point['lon'])
                 if traffic:
                     traffic_data.append(traffic)
+            
+            # Calculate delay factor based on traffic data
+            delay_factor = self.calculate_traffic_delay(traffic_data)
 
             # Create response with combined data
             response = {
                 "summary": {
                     "totalDistanceInMeters": route.get('summary', {}).get('lengthInMeters', 0),
                     "totalTimeInSeconds": route.get('summary', {}).get('travelTimeInSeconds', 0),
-                    "trafficDelayInSeconds": route.get('summary', {}).get('trafficDelayInSeconds', 0),
+                    "trafficDelayInSeconds": route.get('summary', {}).get('trafficDelayInSeconds', 0) * delay_factor,
                     "departureTime": datetime.now().isoformat(),
                 },
                 "legs": route.get('legs', []),
                 "traffic_data": traffic_data
             }
             
-            logger.info("Route optimization completed successfully")
+            logger.debug(f"Route optimization completed successfully: {json.dumps(response, indent=2)}")
             return response
             
         except Exception as e:
@@ -144,12 +153,15 @@ class RouteOptimizer:
                 current_location["lon"]
             )
             
-            return {
+            update = {
                 "status": "ACTIVE",
                 "lastUpdate": datetime.now().isoformat(),
                 "currentLocation": current_location,
                 "trafficData": traffic_data
             }
+
+            logger.debug(f"Route update for {route_id}: {json.dumps(update, indent=2)}")
+            return update
         except Exception as e:
             logger.error(f"Route update failed: {str(e)}")
             return {
