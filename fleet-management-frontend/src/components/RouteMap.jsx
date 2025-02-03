@@ -74,6 +74,7 @@ const RouteMap = ({ depot, destinations, routeData }) => {
   const [liveUpdates, setLiveUpdates] = useState(null);
   const [currentPosition, setCurrentPosition] = useState(null);
   const [lastUpdateTime, setLastUpdateTime] = useState(null);
+  const [routeUpdateInterval, setRouteUpdateInterval] = useState(null);
 
   const getTrafficColor = (currentSpeed, freeFlowSpeed) => {
     if (!currentSpeed || !freeFlowSpeed) return '#4A90E2'; // default blue
@@ -84,6 +85,12 @@ const RouteMap = ({ depot, destinations, routeData }) => {
   };
 
   useEffect(() => {
+    console.log('RouteMap Data:', {
+      depot,
+      destinations,
+      routeData
+    });
+
     if (!mapRef.current) return;
 
     // Initialize map only once
@@ -104,102 +111,66 @@ const RouteMap = ({ depot, destinations, routeData }) => {
   }, []);
 
   useEffect(() => {
-    if (!leafletMap.current || !depot || destinations.length === 0) return;
+    if (!leafletMap.current || !depot || !destinations.length) return;
 
-    // Clean up previous routing control if it exists
-    if (routingControl.current && leafletMap.current) {
-      try {
-        if (leafletMap.current && routingControl.current) {
-          leafletMap.current.removeControl(routingControl.current);
-        }
-      } catch (error) {
-        console.error('Error removing routing control:', error);
+    // Clear existing markers
+    leafletMap.current.eachLayer(layer => {
+      if (layer instanceof L.Marker || layer instanceof L.Polyline) {
+        leafletMap.current.removeLayer(layer);
       }
-      routingControl.current = null; // Reset routing control to avoid conflict
-    }
+    });
 
-    // Clear previous markers and lines from the map
-    if (leafletMap.current) {
-      leafletMap.current.eachLayer(layer => {
-        if (layer instanceof L.Marker || layer instanceof L.Polyline) {
-          leafletMap.current.removeLayer(layer);
-        }
-      });
-    }
+    // Add depot marker with custom icon
+    const depotIcon = L.divIcon({
+      className: 'custom-div-icon',
+      html: `<div style="background-color: #1A1B4B; color: white; padding: 5px; border-radius: 50%; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center;">D</div>`,
+      iconSize: [30, 30],
+      iconAnchor: [15, 15]
+    });
 
-    // Create waypoints array
-    const waypoints = [
-      L.latLng(depot.lat, depot.lon),
-      ...destinations.map(dest => L.latLng(dest.lat, dest.lon)),
-    ];
-
-    // Add depot marker
-    const depotMarker = L.marker([depot.lat, depot.lon])
+    L.marker([depot.lat, depot.lon], { icon: depotIcon })
       .bindPopup(`Depot: ${depot.name}`)
       .addTo(leafletMap.current);
 
-    // Add destination markers
-    destinations.forEach((dest, index) => {
-      L.marker([dest.lat, dest.lon])
-        .bindPopup(`Destination ${index + 1}: ${dest.name}`)
-        .addTo(leafletMap.current);
-    });
+    // Add numbered markers for stops
+    if (routeData?.stops) {
+      routeData.stops.forEach((stop) => {
+        const stopIcon = L.divIcon({
+          className: 'custom-div-icon',
+          html: `<div style="background-color: #4A90E2; color: white; padding: 5px; border-radius: 50%; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center;">${stop.number}</div>`,
+          iconSize: [30, 30],
+          iconAnchor: [15, 15]
+        });
 
-    // Initialize routing control if not already initialized
-    if (!routingControl.current) {
-      routingControl.current = L.Routing.control({
-        waypoints: waypoints,
-        routeWhileDragging: true,
-        showAlternatives: true,
-        fitSelectedRoutes: true,
-        lineOptions: {
-          styles: [{ color: '#4A90E2', weight: 6 }],
-        },
-      }).addTo(leafletMap.current);
+        L.marker([stop.coordinates.lat, stop.coordinates.lon], { icon: stopIcon })
+          .bindPopup(`Stop ${stop.number}: ${stop.name}`)
+          .addTo(leafletMap.current);
+      });
+
+      // Draw route path if coordinates exist
+      if (routeData.geometry?.coordinates) {
+        const coordinates = routeData.geometry.coordinates.map(coord => [coord[1], coord[0]]);
+        
+        L.polyline(coordinates, {
+          color: '#4A90E2',
+          weight: 4,
+          opacity: 0.8,
+          dashArray: '10, 10'  // Makes the line dashed
+        }).addTo(leafletMap.current);
+      }
     }
 
-    // Fit map bounds
-    const bounds = L.latLngBounds(waypoints);
+    // Fit map to show all points
+    const allPoints = [
+      [depot.lat, depot.lon],
+      ...(routeData?.stops 
+        ? routeData.stops.map(stop => [stop.coordinates.lat, stop.coordinates.lon])
+        : destinations.map(dest => [dest.lat, dest.lon]))
+    ];
+    
+    const bounds = L.latLngBounds(allPoints);
     leafletMap.current.fitBounds(bounds, { padding: [50, 50] });
 
-    if (routeData && routeData.legs) {
-      routeData.legs.forEach((leg, legIndex) => {
-        const coordinates = leg.points.map(point => [point.latitude, point.longitude]);
-        const trafficData = routeData.traffic_data?.[legIndex]?.traffic?.flowSegmentData;
-        
-        const color = getTrafficColor(
-          trafficData?.currentSpeed,
-          trafficData?.freeFlowSpeed
-        );
-
-        L.polyline(coordinates, {
-          color: color,
-          weight: 6,
-          opacity: 0.8
-        }).addTo(leafletMap.current);
-      });
-    }
-
-    // Cleanup routing control when component unmounts or dependencies change
-    return () => {
-      if (leafletMap.current && routingControl.current) {
-        try {
-          leafletMap.current.removeControl(routingControl.current);
-        } catch (error) {
-          console.error('Error during cleanup of routing control:', error);
-        }
-        routingControl.current = null; // Reset to avoid conflicts
-      }
-
-      // Cleanup all layers on unmount
-      if (leafletMap.current) {
-        leafletMap.current.eachLayer(layer => {
-          if (layer instanceof L.Marker || layer instanceof L.Polyline) {
-            leafletMap.current.removeLayer(layer);
-          }
-        });
-      }
-    };
   }, [depot, destinations, routeData]);
 
   // Simulate current position updates (replace with real GPS data in production)
@@ -297,21 +268,79 @@ const RouteMap = ({ depot, destinations, routeData }) => {
     }
   };
 
+  // Add new useEffect for route updates
+  useEffect(() => {
+    if (!routeData?.route_id) return;
+
+    const fetchRouteUpdate = async () => {
+      try {
+        const response = await fetch(`http://localhost:8000/route-update/${routeData.route_id}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            depot: depot,
+            destinations: destinations,
+            current_route: routeData
+          }),
+        });
+
+        const updatedRoute = await response.json();
+        
+        if (updatedRoute.needs_rerouting) {
+          // Update route display with new route
+          updateRouteDisplay(updatedRoute.alternative_route);
+          
+          // Show alert about rerouting
+          const alertMessage = updatedRoute.traffic_alerts
+            .map(alert => alert.message)
+            .join('\n');
+          alert(`Route updated due to traffic conditions:\n${alertMessage}`);
+        }
+
+        setLastUpdateTime(new Date().toLocaleTimeString());
+      } catch (error) {
+        console.error('Failed to update route:', error);
+      }
+    };
+
+    // Set up 30-second interval for updates
+    const intervalId = setInterval(fetchRouteUpdate, 30000);
+    setRouteUpdateInterval(intervalId);
+
+    // Initial fetch
+    fetchRouteUpdate();
+
+    // Cleanup interval on unmount
+    return () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
+    };
+  }, [routeData?.route_id, depot, destinations]);
+
   return (
-    <>
-      <MapContainer ref={mapRef}>
-        {routeData && (
-          <RouteInfo>
-            <h3>Route Details</h3>
-            <p>Distance: {(routeData.summary?.totalDistanceInMeters / 1000).toFixed(2)} km</p>
-            <p>Duration: {Math.round(routeData.summary?.totalTimeInSeconds / 60)} mins</p>
-            {lastUpdateTime && (
-              <p>Last Update: {lastUpdateTime}</p>
-            )}
-          </RouteInfo>
-        )}
-      </MapContainer>
-    </>
+    <div style={{ position: 'relative', height: '100%' }}>
+      <div ref={mapRef} style={{ height: '100%' }} />
+      {routeData && (
+        <div style={{
+          position: 'absolute',
+          top: 10,
+          right: 10,
+          background: 'white',
+          padding: '10px',
+          borderRadius: '4px',
+          boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+          zIndex: 1000
+        }}>
+          <h3>Route Details</h3>
+          <p>Distance: {((routeData.total_distance || routeData.distance) / 1000).toFixed(2)} km</p>
+          <p>Stops: {routeData.stops?.length || 0}</p>
+          <p>Last Update: {new Date().toLocaleTimeString()}</p>
+        </div>
+      )}
+    </div>
   );
 };
 

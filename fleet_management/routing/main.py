@@ -1,9 +1,9 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Dict, Optional
 import logging
-from .route_optimizer import RouteOptimizer  # Assuming RouteOptimizer is defined elsewhere
+from .route_optimizer import RouteOptimizer
 from datetime import datetime
 
 # Set up logging
@@ -31,6 +31,10 @@ class RouteRequest(BaseModel):
     depot: Location
     destinations: List[Location]
     departure_time: Optional[str] = None
+
+class MultiPointRequest(BaseModel):
+    user_id: str
+    routes: List[Dict]
 
 routes_store = []  # Temporary in-memory storage for routes
 
@@ -71,6 +75,30 @@ async def get_optimized_route(route_id: int):
         logger.error(f"Route optimization failed: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
 
+# POST: Optimize multi-point delivery
+@app.post("/optimize-multi-point")
+async def optimize_multi_point(request: MultiPointRequest):
+    try:
+        logger.info(f"Received multi-point optimization request for user {request.user_id}")
+        optimizer = RouteOptimizer()
+        optimized_route = await optimizer.optimize_multi_point_delivery(
+            request.user_id,
+            request.routes
+        )
+        
+        # Store the optimized route
+        route_id = len(routes_store)
+        routes_store.append(optimized_route)
+        
+        logger.info(f"Multi-point route optimized for user {request.user_id}")
+        return {
+            "route_id": route_id,
+            "optimized_route": optimized_route
+        }
+    except Exception as e:
+        logger.error(f"Multi-point optimization failed: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+
 # GET: Live route updates
 @app.get("/route-updates/{route_id}")
 async def get_route_updates(
@@ -100,4 +128,16 @@ async def get_route_updates(
         
     except Exception as e:
         logger.error(f"Failed to get route updates: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+# POST: Route update
+@app.post("/route-update/{route_id}")
+async def update_route(route_id: str, current_route: Dict):
+    try:
+        logger.info(f"Received route update request for route {route_id}")
+        optimizer = RouteOptimizer()
+        updated_route = await optimizer.get_route_update(route_id, current_route)
+        return updated_route
+    except Exception as e:
+        logger.error(f"Route update failed: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))

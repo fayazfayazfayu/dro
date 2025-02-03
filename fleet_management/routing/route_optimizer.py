@@ -7,6 +7,8 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import logging
 from dotenv import load_dotenv
+from itertools import permutations
+import numpy as np
 # import polyline
 
 load_dotenv()
@@ -118,108 +120,105 @@ class RouteOptimizer:
             }
 
     async def optimize_route(self, depot: Dict, destinations: List[Dict]) -> Dict:
-        """Optimize route using OSM for routing and TomTom for traffic"""
+        """Optimize a single route"""
         try:
-            logger.debug("Starting route optimization")
+            logger.info("Starting route optimization")
             
-            # Get route from OSM
+            # Format waypoints for OSRM
             waypoints = [depot] + destinations
+            
+            # Get route from OSRM
             route_data = await self.get_osm_route(waypoints)
             
-            if not route_data or 'geometry' not in route_data:
-                raise ValueError("No route found in OSM response")
-
-            # Extract coordinates from the route geometry
+            # Get traffic data for route segments
+            traffic_segments = []
             coordinates = route_data['geometry']['coordinates']
-            total_distance = route_data['distance']  # in meters
-            duration = route_data['duration']  # in seconds
             
             # Sample points along the route for traffic data
-            num_samples = min(len(coordinates), 10)  # Take up to 10 samples
-            sample_indices = [i * (len(coordinates) - 1) // (num_samples - 1) for i in range(num_samples)]
-            sample_points = [coordinates[i] for i in sample_indices]
+            num_samples = min(len(coordinates), 10)  # Take up to 10 sample points
+            sample_indices = np.linspace(0, len(coordinates)-1, num_samples, dtype=int)
             
-            # Get traffic data for sampled points
-            traffic_data = []
-            distance_covered = 0
-            segment_distance = total_distance / (num_samples - 1)
-            
-            for point in sample_points:
-                # Note: OSM returns [lon, lat], but we need [lat, lon] for TomTom
-                segment_traffic = await self.get_traffic_data(point[1], point[0])
+            for idx in sample_indices:
+                coord = coordinates[idx]
+                traffic = await self.get_traffic_data(coord[1], coord[0])
                 
-                if segment_traffic:
-                    segment_traffic['distance_covered'] = distance_covered
-                    traffic_data.append(segment_traffic)
-                    distance_covered += segment_distance
-
-            # Create response with combined data
-            response = {
-                "summary": {
-                    "totalDistanceInMeters": total_distance,
-                    "totalTimeInSeconds": duration,
-                    "departureTime": datetime.now().isoformat(),
-                },
-                "geometry": route_data['geometry'],
-                "traffic_segments": [
+                # Calculate distance from start for this segment
+                distance_covered = route_data['distance'] * (idx / len(coordinates))
+                
+                traffic_segments.append({
+                    'timestamp': datetime.now().isoformat(),
+                    'distance_covered': distance_covered,
+                    'current_speed': traffic['current_speed'],
+                    'congestion_level': traffic['congestion_level']
+                })
+            
+            # Prepare response
+            optimized_route = {
+                'geometry': route_data['geometry'],
+                'distance': route_data['distance'],  # Total distance in meters
+                'duration': route_data['duration'],  # Total duration in seconds
+                'traffic_segments': traffic_segments,
+                'stops': [
                     {
-                        "timestamp": data['timestamp'],
-                        "distance_covered": data['distance_covered'],
-                        "current_speed": data['current_speed'],
-                        "free_flow_speed": data['free_flow_speed'],
-                        "congestion_level": data['congestion_level'],
-                        "coordinates": data['coordinates']
+                        'number': i + 1,
+                        'name': dest.get('name', f'Stop {i+1}'),
+                        'coordinates': {
+                            'lat': dest['lat'],
+                            'lon': dest['lon']
+                        }
                     }
-                    for data in traffic_data
+                    for i, dest in enumerate(destinations)
                 ]
             }
             
-            logger.debug(f"Route optimization completed successfully: {json.dumps(response, indent=2)}")
-            return response
+            logger.info("Route optimization completed")
+            return optimized_route
             
         except Exception as e:
             logger.error(f"Route optimization failed: {str(e)}")
             raise
 
-    async def get_route_update(self, route_id: str) -> Dict:
-        """Get real-time route and traffic updates"""
+    async def get_route_update(self, route_id: str, current_route: Dict) -> Dict:
+        """Get updated route based on current traffic conditions"""
         try:
-            current_location = {
-                "lat": 51.5074,
-                "lon": -0.1278
-            }
+            # Check current traffic conditions
+            conditions = await self.check_route_conditions(current_route)
             
-            traffic_data = await self.get_traffic_data(
-                current_location["lat"], 
-                current_location["lon"]
-            )
-            
-            update = {
-                "status": "ACTIVE",
-                "lastUpdate": datetime.now().isoformat(),
-                "currentLocation": current_location,
-                "trafficData": traffic_data
+            response = {
+                'needs_rerouting': conditions['needs_rerouting'],
+                'traffic_alerts': conditions['traffic_alerts'],
+                'timestamp': datetime.now().isoformat()
             }
 
-            logger.debug(f"Route update for {route_id}: {json.dumps(update, indent=2)}")
-            return update
+            # If heavy traffic detected, calculate alternative route
+            if conditions['needs_rerouting']:
+                current_position = current_route['geometry']['coordinates'][0]
+                destination = current_route['geometry']['coordinates'][-1]
+                
+                alternative_route = await self.calculate_alternative_route(
+                    current_route,
+                    {'lat': current_position[1], 'lon': current_position[0]},
+                    {'lat': destination[1], 'lon': destination[0]}
+                )
+                
+                response['alternative_route'] = alternative_route
+
+            logger.info(f"Route update completed for route {route_id}")
+            return response
+
         except Exception as e:
             logger.error(f"Route update failed: {str(e)}")
-            return {
-                "status": "ERROR",
-                "lastUpdate": datetime.now().isoformat(),
-                "error": str(e)
-            }
+            raise
 
     async def check_route_conditions(self, current_route: Dict) -> Dict:
-        """Check current route conditions and determine if rerouting is needed"""
+        """Enhanced check for current route conditions"""
         try:
             coordinates = current_route['geometry']['coordinates']
             traffic_alerts = []
             needs_rerouting = False
             
-            # Check traffic conditions for upcoming segments
-            for coord in coordinates[:5]:  # Check next 5 segments
+            # Check traffic conditions for route segments
+            for coord in coordinates[::len(coordinates)//10]:  # Sample 10 points along route
                 traffic = await self.get_traffic_data(coord[1], coord[0])
                 
                 if traffic['congestion_level'] == 'High':
@@ -229,6 +228,12 @@ class RouteOptimizer:
                         'message': f"Heavy traffic detected: {traffic['current_speed']} km/h"
                     })
                     needs_rerouting = True
+                elif traffic['congestion_level'] == 'Medium':
+                    traffic_alerts.append({
+                        'coordinates': {'lat': coord[1], 'lon': coord[0]},
+                        'severity': 'Medium',
+                        'message': f"Moderate traffic: {traffic['current_speed']} km/h"
+                    })
             
             return {
                 'needs_rerouting': needs_rerouting,
@@ -269,6 +274,91 @@ class RouteOptimizer:
             
         except Exception as e:
             logger.error(f"Alternative route calculation failed: {str(e)}")
+            raise
+
+    async def optimize_multi_point_delivery(self, user_id: str, routes: List[Dict]) -> Dict:
+        """Optimize multiple deliveries for the same user using TSP"""
+        try:
+            logger.info(f"Starting multi-point optimization for user {user_id}")
+            
+            # Extract all points (depot and destinations)
+            all_points = []
+            depot = None
+            
+            # Get first route's start point as depot
+            if routes:
+                first_route = routes[0]
+                depot = {
+                    'lat': float(first_route['startPoint'].split()[0]),
+                    'lon': float(first_route['startPoint'].split()[1]),
+                    'name': 'Depot'
+                }
+                all_points.append(depot)
+            
+            # Add all destinations with route information
+            for i, route in enumerate(routes, 1):
+                end_lat, end_lon = map(float, route['endPoint'].split())
+                all_points.append({
+                    'lat': end_lat,
+                    'lon': end_lon,
+                    'name': f'Stop {i}: {route.get("name", "")}',
+                    'route_id': route['id'],
+                    'stop_number': i
+                })
+
+            # Calculate distance matrix
+            n = len(all_points)
+            distance_matrix = np.zeros((n, n))
+            
+            for i in range(n):
+                for j in range(n):
+                    if i != j:
+                        route_data = await self.get_osm_route([all_points[i], all_points[j]])
+                        distance_matrix[i][j] = route_data['distance']
+
+            # Solve TSP
+            best_distance = float('inf')
+            best_order = None
+            
+            for perm in permutations(range(1, n)):
+                order = (0,) + perm  # Add depot (0) as first point
+                distance = sum(distance_matrix[order[i]][order[i+1]] for i in range(n-1))
+                distance += distance_matrix[order[-1]][0]  # Return to depot
+                
+                if distance < best_distance:
+                    best_distance = distance
+                    best_order = order
+
+            # Get optimized route with traffic data
+            optimized_points = [all_points[i] for i in best_order]
+            optimized_route = await self.optimize_route(depot, optimized_points[1:])
+            
+            # Add stop information to the response
+            optimized_route['stops'] = [
+                {
+                    'number': point.get('stop_number'),
+                    'name': point.get('name'),
+                    'route_id': point.get('route_id'),
+                    'coordinates': {
+                        'lat': point['lat'],
+                        'lon': point['lon']
+                    }
+                }
+                for point in optimized_points[1:]  # Skip depot
+            ]
+            
+            # Add metadata
+            optimized_route['user_id'] = user_id
+            optimized_route['total_distance'] = best_distance
+            optimized_route['route_order'] = [
+                all_points[i].get('route_id') for i in best_order[1:]
+            ]
+            
+            logger.info(f"Multi-point optimization completed for user {user_id}")
+            return optimized_route
+            
+        except Exception as e:
+            logger.error(f"Multi-point delivery optimization failed: {str(e)}")
             raise
 
     async def get_live_updates(self, route_id: str, current_position: Dict) -> Dict:

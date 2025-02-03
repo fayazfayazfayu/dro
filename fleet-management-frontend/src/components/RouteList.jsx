@@ -101,25 +101,78 @@ const RouteList = ({ searchTerm }) => {
     try {
       const route = routes.find(r => r.id === id);
       if (route) {
-        const [startLat, startLon] = route.startPoint.split(" ").map(coord => parseFloat(coord));
-        const [endLat, endLon] = route.endPoint.split(" ").map(coord => parseFloat(coord));
-
-        const requestBody = {
-          depot: { lat: startLat, lon: startLon, name: route.name },
-          destinations: [{ lat: endLat, lon: endLon, name: route.name }]
-        };
-
-        // Set route and get route_id
-        const setRouteResponse = await axios.post('http://localhost:8000/set-route', requestBody);
-        const routeId = setRouteResponse.data.route_id;
-
-        // Get optimized route using the route_id
-        const optimizedResponse = await axios.get(`http://localhost:8000/optimized-route/${routeId}`);
-        setOptimizedRoutes(prev => ({ ...prev, [id]: optimizedResponse.data.optimized_route }));
+        // Check if user has multiple routes
+        const userRoutes = routes.filter(r => r.userId === route.userId);
         
-        // Open modal with route details
-        setSelectedRoute(route);
-        setIsModalOpen(true);
+        if (userRoutes.length > 1) {
+          // Multi-point optimization (existing code)
+          const response = await axios.post(
+            'http://localhost:8000/optimize-multi-point',
+            {
+              user_id: route.userId,
+              routes: userRoutes
+            }
+          );
+
+          const optimizedRoute = {
+            ...response.data.optimized_route,
+            route_id: response.data.route_id
+          };
+          
+          setOptimizedRoutes(prev => ({ ...prev, [id]: optimizedRoute }));
+          setSelectedRoute({ ...route, isMultiPoint: true });
+          setIsModalOpen(true);
+        } else {
+          // Single route optimization
+          const [startLat, startLon] = route.startPoint.split(" ").map(coord => parseFloat(coord));
+          const [endLat, endLon] = route.endPoint.split(" ").map(coord => parseFloat(coord));
+
+          const requestBody = {
+            depot: { 
+              lat: startLat, 
+              lon: startLon, 
+              name: `Start: ${route.name}` 
+            },
+            destinations: [{
+              lat: endLat,
+              lon: endLon,
+              name: `End: ${route.name}`,
+              route_id: route.id,
+              stop_number: 1
+            }]
+          };
+
+          const setRouteResponse = await axios.post('http://localhost:8000/set-route', requestBody);
+          const routeId = setRouteResponse.data.route_id;
+
+          const optimizedResponse = await axios.get(`http://localhost:8000/optimized-route/${routeId}`);
+          
+          // Format single route response to match multi-point structure
+          const optimizedRoute = {
+            ...optimizedResponse.data.optimized_route,
+            route_id: routeId,
+            stops: [{
+              number: 1,
+              name: `End: ${route.name}`,
+              route_id: route.id,
+              coordinates: {
+                lat: endLat,
+                lon: endLon
+              }
+            }],
+            // Ensure distance is properly set from the response
+            total_distance: optimizedResponse.data.optimized_route.distance,
+            distance: optimizedResponse.data.optimized_route.distance,
+            geometry: optimizedResponse.data.optimized_route.geometry,
+            traffic_segments: optimizedResponse.data.optimized_route.traffic_segments || []
+          };
+          
+          console.log('Optimized route data:', optimizedRoute); // Debug log
+          
+          setOptimizedRoutes(prev => ({ ...prev, [id]: optimizedRoute }));
+          setSelectedRoute({ ...route, isMultiPoint: false });
+          setIsModalOpen(true);
+        }
       }
     } catch (err) {
       console.error('Error fetching optimized route:', err);
